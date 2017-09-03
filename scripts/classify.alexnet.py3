@@ -182,7 +182,7 @@ def main(argv):
             prediction_time += time_step
 
             # Sorting inference results of the last-inserted input among batch images
-            prediction = zip(predictions[repeat-1].tolist(), categories)
+            prediction = zip(predictions[repeat-1].flatten().tolist(), categories)
             #prediction.sort(cmp=lambda x, y: cmp(x[0], y[0]), reverse=True)
             prediction = sorted(prediction, key=lambda x: x[0], reverse=True)
             print(" ground_truth: %s" % label)
