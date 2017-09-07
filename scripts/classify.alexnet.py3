@@ -13,6 +13,7 @@ import argparse
 import time
 import math
 import cv2
+import csv
 import numpy as np
 
 import caffe
@@ -211,6 +212,18 @@ def main(argv):
     # batch size
     repeat = net.blobs['data'].data.shape[0]
 
+    # open csv file (for output)
+    csvFileFP, csvFile = None, None
+    if args.output: 
+        csvFileFP = open(args.output+"_top"+args.top_k+".csv", 'w')
+        csvFile = csv.writer(csvFileFP,
+                            delimiter=',',
+                            quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        csvLine = ['item_no', 'ground_truth']
+        for i in range(top_k):
+            csvLine.extend(['label', 'score'])
+        csvFile.writerow(csvLine)
+
     # load LMDB input
     prediction_time = 0
     g_start = time.time()
@@ -234,6 +247,8 @@ def main(argv):
 
             if((idx % repeat) < repeat-1):
               continue
+
+            csvLine = [key.decode('ascii'), label]
 
             if mean is not None:
                 l_start = time.time()
@@ -295,8 +310,12 @@ def main(argv):
             print(" ground_truth: %s" % label)
             for rank, (score, name) in enumerate(list(prediction)[:top_k], start=1):
                 print('  #%d | %s | %4.1f%%' % (rank, index[name], score * 100))
-
+                csvLine.extend([name, str(score*100)])
             print("  * Locally Done in %.2f ms(prep) + %.2f ms(infer)." % (prep_time * 1000, time_step * 1000) )
+            
+            if csvFile is not None:
+                csvFile.writerow(csvLine)
+                csvFileFP.flush()
 
     print(" Globally Done in %.3f s (prediction: %.3f s)." % ((time.time() - g_start),  prediction_time))
 
