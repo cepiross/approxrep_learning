@@ -250,23 +250,7 @@ def main(argv):
 
             csvLine = [key.decode('ascii'), categories[datum.label]]
 
-            if mean is not None:
-                l_start = time.time()
-                # take center crop based on input data layer
-                # convert dtype to floating-point for considering mean subtraction
-                inputs = inputs[:, :, int(crop[0]):int(crop[2]), int(crop[1]):int(crop[3])].astype(np.float32)
-                prep_time = time.time() - l_start
-
-                # change inputs according to transformer definition
-                # lmdb data format  : Channel x Height x Width
-                # transformer input : Height x Width x Channel
-                for i, img in enumerate(inputs):
-                    elem = img.transpose(1,2,0)
-                    l_start = time.time()
-                    inputs[i] = transformer.preprocess('data', elem)
-                    prep_time = prep_time + time.time() - l_start
-
-            elif hog_param is not None:
+            if hog_param is not None:
                 prep_time = 0
                 l_start = time.time()
                 for i, img in enumerate(inputs):
@@ -292,6 +276,23 @@ def main(argv):
                 # take center crop based on input data layer
                 inputs = inputs[:, :, int(crop[0]):int(crop[2]), int(crop[1]):int(crop[3])].astype(np.float32)
                 prep_time = prep_time + time.time() - l_start
+            else:
+                l_start = time.time()
+
+                # take center crop based on input data layer
+                # convert dtype to floating-point for considering mean subtraction
+                inputs = inputs[:, :, int(crop[0]):int(crop[2]), int(crop[1]):int(crop[3])].astype(np.float32)
+                prep_time = time.time() - l_start
+
+                if mean is not None:
+                    # change inputs according to transformer definition
+                    # lmdb data format  : Channel x Height x Width
+                    # transformer input : Height x Width x Channel
+                    for i, img in enumerate(inputs):
+                        elem = img.transpose(1,2,0)
+                        l_start = time.time()
+                        inputs[i] = transformer.preprocess('data', elem)
+                        prep_time = prep_time + time.time() - l_start                
 
             if((idx % (repeat*10)) == (repeat*10-1)):
                 print("[ %.3f ]" % prediction_time, "Classifying %s item." % key)
