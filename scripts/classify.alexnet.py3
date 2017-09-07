@@ -248,7 +248,7 @@ def main(argv):
             if((idx % repeat) < repeat-1):
               continue
 
-            csvLine = [key.decode('ascii'), label]
+            csvLine = [key.decode('ascii'), categories[datum.label]]
 
             if mean is not None:
                 l_start = time.time()
@@ -312,7 +312,7 @@ def main(argv):
                 print('  #%d | %s | %4.1f%%' % (rank, index[name], score * 100))
                 csvLine.extend([name, str(score*100)])
             print("  * Locally Done in %.2f ms(prep) + %.2f ms(infer)." % (prep_time * 1000, time_step * 1000) )
-            
+
             if csvFile is not None:
                 csvFile.writerow(csvLine)
                 csvFileFP.flush()
