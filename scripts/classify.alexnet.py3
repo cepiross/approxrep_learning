@@ -245,15 +245,16 @@ def main(argv):
                 # change inputs according to transformer definition
                 # lmdb data format  : Channel x Height x Width
                 # transformer input : Height x Width x Channel
-                for idx, img in enumerate(inputs):
+                for i, img in enumerate(inputs):
                     elem = img.transpose(1,2,0)
                     l_start = time.time()
-                    inputs[idx] = transformer.preprocess('data', elem)
+                    inputs[i] = transformer.preprocess('data', elem)
                     prep_time = prep_time + time.time() - l_start
+
             elif hog_param is not None:
                 prep_time = 0
                 l_start = time.time()
-                for idx, img in enumerate(inputs):
+                for i, img in enumerate(inputs):
                     elem = img.transpose(1,2,0).astype(float)
                     l_start = time.time()
                     # HOG kernel size : 8x8, stride: 8
@@ -261,7 +262,7 @@ def main(argv):
                     # migrate features from 5D to 3D
                     ifeat = np.reshape(ifeat, (ifeat.shape[0], ifeat.shape[1], -1))
                     # change row x col x ch -> ch x row x col
-                    if idx == 0:
+                    if i == 0:
                         new_inputs = np.transpose(ifeat, (2,0,1))
                     else:
                         new_inputs = np.concatenate((new_inputs, np.transpose(ifeat, (2,0,1))), axis=0)
@@ -285,7 +286,6 @@ def main(argv):
             out = net.forward_all(data=inputs)
             predictions = out['prob']
             time_step = time.time() - l_start
-            print("  * Locally Done in %.2f ms(prep) + %.2f ms(infer)." % (prep_time * 1000, time_step * 1000) )
             prediction_time += time_step
 
             # Sorting inference results of the last-inserted input among batch images
@@ -296,6 +296,7 @@ def main(argv):
             for rank, (score, name) in enumerate(list(prediction)[:top_k], start=1):
                 print('  #%d | %s | %4.1f%%' % (rank, index[name], score * 100))
 
+            print("  * Locally Done in %.2f ms(prep) + %.2f ms(infer)." % (prep_time * 1000, time_step * 1000) )
 
     print(" Globally Done in %.3f s (prediction: %.3f s)." % ((time.time() - g_start),  prediction_time))
 
