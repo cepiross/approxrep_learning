@@ -8,12 +8,12 @@ By default it configures and runs the fine-tuned Caffe reference ImageNet model.
 """
 import os
 import sys
-import lmdb
 import argparse
 import time
 import math
-import cv2
 import csv
+import lmdb
+import cv2
 import numpy as np
 
 import caffe
@@ -25,10 +25,10 @@ NUM_BINS = 6
 ALIASING_FACTOR = 3
 MAX_BINS = NUM_BINS * ALIASING_FACTOR
 UNIT_DEGREE = 2 * math.pi / MAX_BINS
-TRIGON_PAIRS = np.zeros((2, MAX_BINS))
-for idx in range(MAX_BINS):
-    TRIGON_PAIRS[0][idx] = math.cos(idx * UNIT_DEGREE)
-    TRIGON_PAIRS[1][idx] = math.sin(idx * UNIT_DEGREE)
+TRIGON_PAIRS = np.zeros((2, MAX_BINS), dtype='f')
+for tri_idx in range(MAX_BINS):
+    TRIGON_PAIRS[0][tri_idx] = math.cos(tri_idx * UNIT_DEGREE)
+    TRIGON_PAIRS[1][tri_idx] = math.sin(tri_idx * UNIT_DEGREE)
 
 def hog_histogram(im_rgb, param):
     '''Make cell-wise histogram of oriented gradients'''
@@ -38,7 +38,8 @@ def hog_histogram(im_rgb, param):
     stride = param[1]
 
     # start to compute element-wise gradient, magnitude, and max orientation
-    # according to Ix * cos(theta) + Iy * sin(theta) where theta = {0, 2*pi/max_bins, ..., 2*pi*(1-1/max_bins)}
+    # according to Ix * cos(theta) + Iy * sin(theta)
+    # where theta = {0, 2*pi/max_bins, ..., 2*pi*(1-1/max_bins)}
     im_ix = cv2.filter2D(im_rgb, -1, np.array([[-1, 0, 1]]))
     im_iy = cv2.filter2D(im_rgb, -1, np.array([[-1], [0], [1]]))
 
@@ -47,7 +48,7 @@ def hog_histogram(im_rgb, param):
         im_candidate[:, :, :, i] = np.add(np.multiply(im_ix[:, :, :], TRIGON_PAIRS[0][i]), \
                                          np.multiply(im_iy[:, :, :], TRIGON_PAIRS[1][i]))
     im_orientation = np.argmax(im_candidate, axis=3)
-    im_gradmax = np.max(im_candidate, axis=3) 
+    im_gradmax = np.max(im_candidate, axis=3)
 
     # spread magnitude with respect to orientation theta
     # such that argmax Ix*cos+Iy*sin = Msin(theta-alpha) where theta = alpha
@@ -123,19 +124,22 @@ def main(argv):
         "--mean_file",
         #default=os.path.join(pycaffe_dir, 'imagenet/imagenet_mean.binaryproto'),
         help="Data set image mean of [Channels x Height x Width] dimensions " +
-             "(numpy array). Set to '' for no mean subtraction."
+        "(numpy array). Set to '' for no mean subtraction."
     )
     parser.add_argument(
         "--hog",
         #default="8,8",
         help="Activate HOG Feature Extractor. " +
-             "Kernel size, Stride size."
+        "Kernel size, Stride size."
+    )
+    parser.add_argument(
+        "--verbose",
     )
     parser.add_argument(
         "--channel_swap",
         #default="0,1,2",
         help="Order to permute input channels. " +
-             "If you created lmdb by using Caffe, the channel format would already be BGR."
+        "If you created lmdb by using Caffe, the channel format would already be BGR."
     )
     parser.add_argument(
         "--synset_words",
@@ -195,13 +199,13 @@ def main(argv):
     # Choose the position of cropped center
     crop_dims = np.array(net.blobs['data'].data.shape[2:])
     center = np.array(image_dims) / 2.0
-    crop = np.tile(center, (1, 2))[0] + np.concatenate([-crop_dims / 2.0, crop_dims/2.0])
+    crop = np.tile(center, (1, 2))[0] + np.concatenate([-crop_dims/2.0, crop_dims/2.0])
 
     # Set up transformer configuration
     # input  : Height x Width x Channel
     # output : Channel x Height x Width
     transformer = caffe.io.Transformer({'data': net.blobs['data'].data.shape})
-    transformer.set_transpose('data',(2,0,1))
+    transformer.set_transpose('data', (2, 0, 1))
     if mean is not None:
         transformer.set_mean('data', mean[:, int(crop[0]):int(crop[2]), int(crop[1]):int(crop[3])])
     if channel_swap is not None:
@@ -213,24 +217,24 @@ def main(argv):
     repeat = net.blobs['data'].data.shape[0]
 
     # open csv file (for output)
-    csvFileFP, csvFile = None, None
-    if args.output: 
-        csvFileFP = open(args.output+"_top"+args.top_k+".csv", 'w')
-        csvFile = csv.writer(csvFileFP,
-                            delimiter=',',
-                            quotechar='|', quoting=csv.QUOTE_MINIMAL)
-        csvLine = ['item_no', 'ground_truth']
+    csvfile_fp, csvfile = None, None
+    if args.output:
+        csvfile_fp = open(args.output+"_top"+args.top_k+".csv", 'w')
+        csvfile = csv.writer(csvfile_fp,
+                             delimiter=',',
+                             quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        csv_line = ['item_no', 'ground_truth']
         for i in range(top_k):
-            csvLine.extend(['label', 'score'])
-        csvFile.writerow(csvLine)
+            csv_line.extend(['label', 'score'])
+        csvfile.writerow(csv_line)
 
     # load LMDB input
     prediction_time = 0
     g_start = time.time()
-    db = lmdb.open(args.test_db, readonly=True)
+    testdb = lmdb.open(args.test_db, readonly=True)
     datum = caffe.proto.caffe_pb2.Datum()
 
-    with db.begin() as txn:
+    with testdb.begin() as txn:
         cursor = txn.cursor()
         for key, value in cursor:
             datum.ParseFromString(value)
@@ -240,48 +244,51 @@ def main(argv):
             data = np.asarray([data])
 
             # Accumulate the set of input images before calling classifier
-            if((idx % repeat) == 0):
+            if (idx % repeat) == 0:
                 inputs = data
             else:
-                inputs = np.concatenate((inputs,data), axis=0)
+                inputs = np.concatenate((inputs, data), axis=0)
 
-            if((idx % repeat) < repeat-1):
-              continue
+            if (idx % repeat) < repeat-1:
+                continue
 
-            csvLine = [key.decode('ascii'), categories[datum.label]]
+            csv_line = [key.decode('ascii'), categories[datum.label]]
 
             if hog_param is not None:
                 prep_time = 0
                 l_start = time.time()
                 for i, img in enumerate(inputs):
-                    elem = img.transpose(1,2,0).astype(float)
+                    elem = img.transpose(1, 2, 0).astype(float)
                     l_start = time.time()
                     # HOG kernel size : 8x8, stride: 8
                     ifeat = hog_histogram(elem, hog_param)
-                    # migrate features from 5D to 3D
+                    # migrate features from 4D to 3D
                     ifeat = np.reshape(ifeat, (ifeat.shape[0], ifeat.shape[1], -1))
                     # change row x col x ch -> ch x row x col
                     if i == 0:
-                        new_inputs = np.transpose(ifeat, (2,0,1))
+                        new_inputs = np.transpose(ifeat, (2, 0, 1))
                     else:
                         new_inputs = np.concatenate((new_inputs, np.transpose(ifeat, (2,0,1))), axis=0)
                     prep_time = prep_time + time.time() - l_start
 
                 if len(new_inputs.shape) == 3:
-                    inputs = np.reshape(new_inputs, (1, new_inputs.shape[0], new_inputs.shape[1], new_inputs.shape[2]))
+                    inputs = np.reshape(new_inputs, \
+                                (1, new_inputs.shape[0], new_inputs.shape[1], new_inputs.shape[2]))
                 else:
                     inputs = new_inputs
 
                 l_start = time.time()
                 # take center crop based on input data layer
-                inputs = inputs[:, :, int(crop[0]):int(crop[2]), int(crop[1]):int(crop[3])].astype(np.float32)
+                inputs = inputs[:, :, \
+                                int(crop[0]):int(crop[2]), int(crop[1]):int(crop[3])].astype('f')
                 prep_time = prep_time + time.time() - l_start
             else:
                 l_start = time.time()
 
                 # take center crop based on input data layer
                 # convert dtype to floating-point for considering mean subtraction
-                inputs = inputs[:, :, int(crop[0]):int(crop[2]), int(crop[1]):int(crop[3])].astype(np.float32)
+                inputs = inputs[:, :, \
+                                int(crop[0]):int(crop[2]), int(crop[1]):int(crop[3])].astype('f')
                 prep_time = time.time() - l_start
 
                 if mean is not None:
@@ -289,12 +296,12 @@ def main(argv):
                     # lmdb data format  : Channel x Height x Width
                     # transformer input : Height x Width x Channel
                     for i, img in enumerate(inputs):
-                        elem = img.transpose(1,2,0)
+                        elem = img.transpose(1, 2, 0)
                         l_start = time.time()
                         inputs[i] = transformer.preprocess('data', elem)
-                        prep_time = prep_time + time.time() - l_start                
+                        prep_time = prep_time + time.time() - l_start
 
-            if((idx % (repeat*10)) == (repeat*10-1)):
+            if(idx % (repeat*10)) == (repeat*10-1):
                 print("[ %.3f ]" % prediction_time, "Classifying %s item." % key)
 
             # Classify.
@@ -311,14 +318,17 @@ def main(argv):
             print(" ground_truth: %s" % label)
             for rank, (score, name) in enumerate(list(prediction)[:top_k], start=1):
                 print('  #%d | %s | %4.1f%%' % (rank, index[name], score * 100))
-                csvLine.extend([name, str(score*100)])
-            print("  * Locally Done in %.2f ms(prep) + %.2f ms(infer)." % (prep_time * 1000, time_step * 1000) )
+                csv_line.extend([name, str(score*100)])
+            if args.verbose is not None:
+                print("  * Locally Done in %.2f ms(prep) + %.2f ms(infer)." % \
+                            (prep_time * 1000, time_step * 1000))
 
-            if csvFile is not None:
-                csvFile.writerow(csvLine)
-                csvFileFP.flush()
+            if csvfile is not None:
+                csvfile.writerow(csv_line)
+                csvfile_fp.flush()
 
-    print(" Globally Done in %.3f s (prediction: %.3f s)." % ((time.time() - g_start),  prediction_time))
+    print(" Globally Done in %.3f s (prediction: %.3f s)." % \
+                    ((time.time() - g_start), prediction_time))
 
 if __name__ == '__main__':
     main(sys.argv)
