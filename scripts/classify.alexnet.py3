@@ -83,7 +83,10 @@ def hog_histogram(im_rgb, param):
                         np.sum(im_gradient[row:row+cell_size, col:col+cell_size, :, :], axis=(0, 1))
     return im_histogram
 
-def main(argv):
+def prepare_args():
+    '''
+    A list of arguments can be used in this python script
+    '''
     pycaffe_dir = os.path.dirname(__file__)
 
     parser = argparse.ArgumentParser()
@@ -151,7 +154,14 @@ def main(argv):
         default='3',
         help="Number of candidate."
     )
-    args = parser.parse_args()
+
+    return parser.parse_args()
+
+def main(argv):
+    '''
+    Run CNN top-k classification by repeating the retrieval of an input batch from test LMDB
+    '''
+    args = prepare_args()
 
     image_dims = [int(s) for s in args.images_dim.split(',')]
     hog_param, mean, channel_swap = None, None, None
