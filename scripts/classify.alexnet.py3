@@ -12,6 +12,7 @@ import argparse
 import time
 import math
 import csv
+import concurrent.futures
 import lmdb
 import cv2
 import numpy as np
@@ -29,6 +30,92 @@ TRIGON_PAIRS = np.zeros((2, MAX_BINS), dtype='f')
 for tri_idx in range(MAX_BINS):
     TRIGON_PAIRS[0][tri_idx] = math.cos(tri_idx * UNIT_DEGREE)
     TRIGON_PAIRS[1][tri_idx] = math.sin(tri_idx * UNIT_DEGREE)
+
+def compute_candidate(im_candidate, im_ix, im_iy, bin_idx):
+    '''
+    Compute intensity of gradient candidates with respect to Ix, Iy, and angular bin
+    '''
+    im_candidate[bin_idx, ...] = np.add(np.multiply(im_ix[...], TRIGON_PAIRS[0][bin_idx]), \
+                                       np.multiply(im_iy[...], TRIGON_PAIRS[1][bin_idx]))
+
+def forward_interpolate_gradient(im_gradient, bin_idx):
+    '''
+    Propagate gradients from intermediate angular bins to the next target angular bin.
+    prev_bin -- (intermediate: prev_bin+offset) -- next_bin
+    '''
+    if bin_idx % ALIASING_FACTOR == 0 and bin_idx < MAX_BINS:
+        next_bin = (bin_idx + ALIASING_FACTOR) % MAX_BINS
+        for offset in range(1, ALIASING_FACTOR):
+            im_gradient[next_bin, ...] = np.add(im_gradient[next_bin, ...], \
+                                               np.multiply(im_gradient[bin_idx+offset, ...], \
+                                               float(offset) / ALIASING_FACTOR))
+
+def backward_interpolate_gradient(im_gradient, bin_idx):
+    '''
+    Propagate gradients from intermediate angular bins to the previous target angular bin.
+    prev_bin -- (intermediate: prev_bin+offset) -- next_bin
+    '''
+    if bin_idx % ALIASING_FACTOR == 0 and bin_idx > 0:
+        prev_bin = bin_idx - ALIASING_FACTOR
+        for offset in range(1, ALIASING_FACTOR):
+            im_gradient[prev_bin, ...] = np.add(im_gradient[prev_bin, ...], \
+                                               np.multiply(im_gradient[prev_bin+offset, ...], \
+                                               float(ALIASING_FACTOR - offset) / ALIASING_FACTOR))
+
+def hog_histogram_parallel(im_rgb, param):
+    '''
+    Make cell-wise histogram of oriented gradients
+    '''
+    height = im_rgb.shape[0]
+    width = im_rgb.shape[1]
+    cell_size = param[0]
+    stride = param[1]
+    # start to compute element-wise gradient, magnitude, and max orientation
+    # according to Ix * cos(theta) + Iy * sin(theta)
+    # where theta = {0, 2*pi/max_bins, ..., 2*pi*(1-1/max_bins)}
+    im_ix = cv2.filter2D(im_rgb, -1, np.array([[-1, 0, 1]])).transpose(2, 0, 1)
+    im_iy = cv2.filter2D(im_rgb, -1, np.array([[-1], [0], [1]])).transpose(2, 0, 1)
+    im_candidate = np.zeros((MAX_BINS, im_rgb.shape[2], im_rgb.shape[0], im_rgb.shape[1]), \
+                            dtype='f')
+    with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_BINS) as executor:
+        futures = [executor.submit(compute_candidate, im_candidate, im_ix, im_iy, i) \
+                    for i in range(MAX_BINS)]
+        concurrent.futures.wait(futures)
+
+    im_candidate = im_candidate.astype('int16')
+    im_orientation = np.argmax(im_candidate, axis=0).astype('uint8')
+    # spread magnitude with respect to orientation theta
+    # such that argmax Ix*cos+Iy*sin = Msin(theta-alpha) where theta = alpha
+    im_gradient = np.zeros_like(im_candidate)
+    idx = np.indices(im_orientation.shape)
+    im_gradient[im_orientation, idx[0], idx[1], idx[2]] = \
+                im_candidate[im_orientation, idx[0], idx[1], idx[2]]
+
+    # bilinear interploation of magnitude to mitigate aliasing
+    with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_BINS) as executor:
+        futures = [executor.submit(forward_interpolate_gradient, im_gradient, i) \
+                        for i in range(0, MAX_BINS, ALIASING_FACTOR)]
+        concurrent.futures.wait(futures)
+        futures = [executor.submit(backward_interpolate_gradient, im_gradient, i) \
+                        for i in range(MAX_BINS, 0, -ALIASING_FACTOR)]
+        concurrent.futures.wait(futures)
+
+    # downsample MAX_BINS to NUM_BINS
+    im_gradient = im_gradient[::ALIASING_FACTOR, ...]
+
+    # record histogram of oriented gradients (magnitude)
+    im_histogram = np.zeros((NUM_BINS, im_rgb.shape[2], \
+                                (im_rgb.shape[0]-cell_size)//stride+1, \
+                                (im_rgb.shape[1]-cell_size)//stride+1))
+
+    for row in range(0, height-cell_size+1, stride):
+        for col in range(0, width-cell_size+1, stride):
+            im_histogram[..., row//stride, col//stride] = \
+                        np.sum(im_gradient[..., row:row+cell_size, col:col+cell_size], axis=(2, 3))
+
+    # since the order of dimensions in previous implementation: (HEIGHT, WIDTH, CHANNEL, BINS),
+    # optimized algorithm should also follow the order of dimensions: (CHANNEL, BINS, HEIGHT, WIDTH)
+    return im_histogram.transpose(1, 0, 2, 3)
 
 def hog_histogram(im_rgb, param):
     '''Make cell-wise histogram of oriented gradients'''
@@ -137,6 +224,7 @@ def prepare_args():
     )
     parser.add_argument(
         "--verbose",
+        help="Analyze Front-end Feature Extraction."
     )
     parser.add_argument(
         "--channel_swap",
@@ -268,17 +356,31 @@ def main(argv):
                 prep_time = 0
                 l_start = time.time()
                 for i, img in enumerate(inputs):
-                    elem = img.transpose(1, 2, 0).astype(float)
+                    # elem = img.transpose(1, 2, 0).astype(float)
+                    # l_start = time.time()
+                    # # HOG kernel size : 8x8, stride: 8
+                    # ifeat = hog_histogram(elem, hog_param)
+                    # # migrate features from 4D to 3D
+                    # ifeat = np.reshape(ifeat, (ifeat.shape[0], ifeat.shape[1], -1))
+                    # # change row x col x ch -> ch x row x col
+                    # if i == 0:
+                    #     new_inputs = np.transpose(ifeat, (2, 0, 1))
+                    # else:
+                    #     new_inputs = np.concatenate((new_inputs, \
+                    #                                 np.transpose(ifeat, (2, 0, 1))), axis=0)
+                    # prep_time = prep_time + time.time() - l_start
+
+                    elem = img.transpose(1, 2, 0).astype('int16')
                     l_start = time.time()
                     # HOG kernel size : 8x8, stride: 8
-                    ifeat = hog_histogram(elem, hog_param)
+                    ifeat = hog_histogram_parallel(elem, hog_param)
                     # migrate features from 4D to 3D
-                    ifeat = np.reshape(ifeat, (ifeat.shape[0], ifeat.shape[1], -1))
-                    # change row x col x ch -> ch x row x col
+                    ifeat = np.reshape(ifeat, (-1, ifeat.shape[-2], ifeat.shape[-1]))
+                    # stack ch x row x col
                     if i == 0:
-                        new_inputs = np.transpose(ifeat, (2, 0, 1))
+                        new_inputs = ifeat
                     else:
-                        new_inputs = np.concatenate((new_inputs, np.transpose(ifeat, (2,0,1))), axis=0)
+                        new_inputs = np.concatenate((new_inputs, ifeat), axis=0)
                     prep_time = prep_time + time.time() - l_start
 
                 if len(new_inputs.shape) == 3:
@@ -315,10 +417,24 @@ def main(argv):
                 print("[ %.3f ]" % prediction_time, "Classifying %s item." % key)
 
             # Classify.
-            l_start = time.time()
-            out = net.forward_all(data=inputs)
-            predictions = out['prob']
-            time_step = time.time() - l_start
+
+            if args.verbose is not None:
+                layer_sep = [str(s) for s in args.verbose.split(',')]
+                #print (layer_sep)
+                l_start = time.time()
+                net.forward(start='data', end=layer_sep[0], data=inputs)
+                #print(net.blobs[layer_sep[0]].data[...])
+                front_time = time.time()
+                out = net.forward(start=layer_sep[1])
+                predictions = out['prob']
+                time_step = time.time() - front_time
+                front_time = front_time - l_start
+                prediction_time += front_time
+            else:
+                l_start = time.time()
+                out = net.forward_all(data=inputs)
+                predictions = out['prob']
+                time_step = time.time() - l_start
             prediction_time += time_step
 
             # Sorting inference results of the last-inserted input among batch images
@@ -330,6 +446,9 @@ def main(argv):
                 print('  #%d | %s | %4.1f%%' % (rank, index[name], score * 100))
                 csv_line.extend([name, str(score*100)])
             if args.verbose is not None:
+                print("  * Locally Done in %.2f ms(prep) + %.2f/%.2f ms(infer)." % \
+                            (prep_time * 1000, front_time * 1000, time_step * 1000))
+            else:
                 print("  * Locally Done in %.2f ms(prep) + %.2f ms(infer)." % \
                             (prep_time * 1000, time_step * 1000))
 
