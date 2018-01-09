@@ -91,17 +91,18 @@ def hog_histogram_parallel(im_rgb, param):
     im_gradient[im_orientation, idx[0], idx[1], idx[2]] = \
                 im_candidate[im_orientation, idx[0], idx[1], idx[2]]
 
-    # bilinear interploation of magnitude to mitigate aliasing
-    with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_BINS) as executor:
-        futures = [executor.submit(forward_interpolate_gradient, im_gradient, i) \
-                        for i in range(0, MAX_BINS, ALIASING_FACTOR)]
-        concurrent.futures.wait(futures)
-        futures = [executor.submit(backward_interpolate_gradient, im_gradient, i) \
-                        for i in range(MAX_BINS, 0, -ALIASING_FACTOR)]
-        concurrent.futures.wait(futures)
+    if ALIASING_FACTOR > 1:
+        # bilinear interploation of magnitude to mitigate aliasing
+        with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_BINS) as executor:
+            futures = [executor.submit(forward_interpolate_gradient, im_gradient, i) \
+                            for i in range(0, MAX_BINS, ALIASING_FACTOR)]
+            concurrent.futures.wait(futures)
+            futures = [executor.submit(backward_interpolate_gradient, im_gradient, i) \
+                            for i in range(MAX_BINS, 0, -ALIASING_FACTOR)]
+            concurrent.futures.wait(futures)
 
-    # downsample MAX_BINS to NUM_BINS
-    im_gradient = im_gradient[::ALIASING_FACTOR, ...]
+        # downsample MAX_BINS to NUM_BINS
+        im_gradient = im_gradient[::ALIASING_FACTOR, ...]
 
     # record histogram of oriented gradients (magnitude)
     im_histogram = np.zeros((NUM_BINS, im_rgb.shape[2], \
@@ -144,21 +145,22 @@ def hog_histogram(im_rgb, param):
         loc = np.where(im_orientation == i)
         im_gradient[loc[0], loc[1], loc[2], i] = im_gradmax[loc[0], loc[1], loc[2]]
 
-    # bilinear interploation of magnitude to mitigate aliasing
-    for i in range(MAX_BINS):
-        offset = i % ALIASING_FACTOR
-        if offset != 0:
-            prev_bin = i - offset
-            next_bin = (prev_bin + ALIASING_FACTOR) % MAX_BINS
-            im_gradient[:, :, :, prev_bin] = np.add(im_gradient[:, :, :, prev_bin], \
-                                                    np.multiply(im_gradient[:, :, :, i], \
-                                                    (ALIASING_FACTOR - offset) / ALIASING_FACTOR))
-            im_gradient[:, :, :, next_bin] = np.add(im_gradient[:, :, :, next_bin], \
-                                                    np.multiply(im_gradient[:, :, :, i], \
-                                                    offset / ALIASING_FACTOR))
+    if ALIASING_FACTOR > 1:
+        # bilinear interploation of magnitude to mitigate aliasing
+        for i in range(MAX_BINS):
+            offset = i % ALIASING_FACTOR
+            if offset != 0:
+                prev_bin = i - offset
+                next_bin = (prev_bin + ALIASING_FACTOR) % MAX_BINS
+                im_gradient[:, :, :, prev_bin] = np.add(im_gradient[:, :, :, prev_bin], \
+                                                        np.multiply(im_gradient[:, :, :, i], \
+                                                        (ALIASING_FACTOR - offset) / ALIASING_FACTOR))
+                im_gradient[:, :, :, next_bin] = np.add(im_gradient[:, :, :, next_bin], \
+                                                        np.multiply(im_gradient[:, :, :, i], \
+                                                        offset / ALIASING_FACTOR))
 
-    # downsample MAX_BINS to NUM_BINS
-    im_gradient = im_gradient[:, :, :, ::ALIASING_FACTOR]
+        # downsample MAX_BINS to NUM_BINS
+        im_gradient = im_gradient[:, :, :, ::ALIASING_FACTOR]
 
     # record histogram of oriented gradients (magnitude)
     im_histogram = np.zeros(((im_rgb.shape[0]-cell_size)//stride+1, \
