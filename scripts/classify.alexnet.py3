@@ -358,6 +358,7 @@ def main(argv):
                 prep_time = 0
                 l_start = time.time()
                 for i, img in enumerate(inputs):
+                    ###################
                     # elem = img.transpose(1, 2, 0).astype(float)
                     # l_start = time.time()
                     # # HOG kernel size : 8x8, stride: 8
@@ -365,31 +366,26 @@ def main(argv):
                     # # migrate features from 4D to 3D
                     # ifeat = np.reshape(ifeat, (ifeat.shape[0], ifeat.shape[1], -1))
                     # # change row x col x ch -> ch x row x col
-                    # if i == 0:
-                    #     new_inputs = np.transpose(ifeat, (2, 0, 1))
-                    # else:
-                    #     new_inputs = np.concatenate((new_inputs, \
-                    #                                 np.transpose(ifeat, (2, 0, 1))), axis=0)
-                    # prep_time = prep_time + time.time() - l_start
-
+                    # ifeat = np.transpose(ifeat, (2, 0, 1))
+                    ###################
                     elem = img.transpose(1, 2, 0).astype('int16')
                     l_start = time.time()
                     # HOG kernel size : 8x8, stride: 8
                     ifeat = hog_histogram_parallel(elem, hog_param)
-                    # migrate features from 4D to 3D
+                    # migrate features from 4D to 3D: ch x row x col
                     ifeat = np.reshape(ifeat, (-1, ifeat.shape[-2], ifeat.shape[-1]))
-                    # stack ch x row x col
+                    ###################
+
+                    # exclude memory reconstruction from prep_time with respect to the batch size
+                    prep_time = prep_time + time.time() - l_start
+                    # stack 1 x ch x row x col
+                    ifeat = np.reshape(ifeat, \
+                                (1, ifeat.shape[0], ifeat.shape[1], ifeat.shape[2]))
                     if i == 0:
                         new_inputs = ifeat
                     else:
                         new_inputs = np.concatenate((new_inputs, ifeat), axis=0)
-                    prep_time = prep_time + time.time() - l_start
-
-                if len(new_inputs.shape) == 3:
-                    inputs = np.reshape(new_inputs, \
-                                (1, new_inputs.shape[0], new_inputs.shape[1], new_inputs.shape[2]))
-                else:
-                    inputs = new_inputs
+                inputs = new_inputs
 
                 l_start = time.time()
                 # take center crop based on input data layer
