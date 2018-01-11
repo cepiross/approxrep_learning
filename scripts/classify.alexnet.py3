@@ -23,6 +23,7 @@ sys.stdout = sys.stderr
 
 # I am going to try anti-aliasing according to factor x supersampling
 NUM_BINS = 6
+PRECISION = 'float32' # for 18 angular bins. 'int16' works for less than or equal to 6 angular bins.
 ALIASING_FACTOR = 3
 MAX_BINS = NUM_BINS * ALIASING_FACTOR
 UNIT_DEGREE = 2 * math.pi / MAX_BINS
@@ -82,7 +83,7 @@ def hog_histogram_parallel(im_rgb, param):
                     for i in range(MAX_BINS)]
         concurrent.futures.wait(futures)
 
-    im_candidate = im_candidate.astype('int16')
+    im_candidate = im_candidate.astype(PRECISION)
     im_orientation = np.argmax(im_candidate, axis=0).astype('uint8')
     # spread magnitude with respect to orientation theta
     # such that argmax Ix*cos+Iy*sin = Msin(theta-alpha) where theta = alpha
