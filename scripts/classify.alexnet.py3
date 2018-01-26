@@ -14,8 +14,8 @@ import math
 import csv
 import concurrent.futures
 import lmdb
-import cv2
 import numpy as np
+import cv2
 
 import caffe
 
@@ -154,11 +154,11 @@ def hog_histogram(im_rgb, param):
                 prev_bin = i - offset
                 next_bin = (prev_bin + ALIASING_FACTOR) % MAX_BINS
                 im_gradient[:, :, :, prev_bin] = np.add(im_gradient[:, :, :, prev_bin], \
-                                                        np.multiply(im_gradient[:, :, :, i], \
-                                                        (ALIASING_FACTOR - offset) / ALIASING_FACTOR))
+                                                    np.multiply(im_gradient[:, :, :, i], \
+                                                    (ALIASING_FACTOR - offset) / ALIASING_FACTOR))
                 im_gradient[:, :, :, next_bin] = np.add(im_gradient[:, :, :, next_bin], \
-                                                        np.multiply(im_gradient[:, :, :, i], \
-                                                        offset / ALIASING_FACTOR))
+                                                    np.multiply(im_gradient[:, :, :, i], \
+                                                    offset / ALIASING_FACTOR))
 
         # downsample MAX_BINS to NUM_BINS
         im_gradient = im_gradient[:, :, :, ::ALIASING_FACTOR]
@@ -357,7 +357,6 @@ def main(argv):
 
             if hog_param is not None:
                 prep_time = 0
-                l_start = time.time()
                 for i, img in enumerate(inputs):
                     ###################
                     # elem = img.transpose(1, 2, 0).astype(float)
