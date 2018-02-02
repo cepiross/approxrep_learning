@@ -27,17 +27,32 @@ PRECISION = 'float32' # for 18 angular bins. 'int16' works for less than or equa
 ALIASING_FACTOR = 3
 MAX_BINS = NUM_BINS * ALIASING_FACTOR
 UNIT_DEGREE = 2 * math.pi / MAX_BINS
-TRIGON_PAIRS = np.zeros((2, MAX_BINS), dtype='f')
+TRIGON_PAIRS = np.zeros((MAX_BINS, 2), dtype='f')
 for tri_idx in range(MAX_BINS):
-    TRIGON_PAIRS[0][tri_idx] = math.cos(tri_idx * UNIT_DEGREE)
-    TRIGON_PAIRS[1][tri_idx] = math.sin(tri_idx * UNIT_DEGREE)
+    TRIGON_PAIRS[tri_idx][0] = math.cos(tri_idx * UNIT_DEGREE)
+    TRIGON_PAIRS[tri_idx][1] = math.sin(tri_idx * UNIT_DEGREE)
+
+FORWARD_INTERPOLATE = np.eye(MAX_BINS, dtype='f')
+for i in range(0, MAX_BINS, ALIASING_FACTOR):
+    next_bin = (i + ALIASING_FACTOR) % MAX_BINS
+    for offset in range(1, ALIASING_FACTOR):
+        FORWARD_INTERPOLATE[next_bin, i + offset] = \
+                            float(offset) / ALIASING_FACTOR
+
+BACKWARD_INTERPOLATE = np.zeros((MAX_BINS, MAX_BINS), dtype='f')
+for i in range(MAX_BINS, 0, -ALIASING_FACTOR):
+    prev_bin = i - ALIASING_FACTOR
+    for offset in range(1, ALIASING_FACTOR):
+        BACKWARD_INTERPOLATE[prev_bin, prev_bin + offset] = \
+                            float(ALIASING_FACTOR - offset) / ALIASING_FACTOR
+    BACKWARD_INTERPOLATE[prev_bin, prev_bin] = 1
 
 def compute_candidate(im_candidate, im_ix, im_iy, bin_idx):
     '''
     Compute intensity of gradient candidates with respect to Ix, Iy, and angular bin
     '''
-    im_candidate[bin_idx, ...] = np.add(np.multiply(im_ix[...], TRIGON_PAIRS[0][bin_idx]), \
-                                       np.multiply(im_iy[...], TRIGON_PAIRS[1][bin_idx]))
+    im_candidate[bin_idx, ...] = np.add(np.multiply(im_ix[...], TRIGON_PAIRS[bin_idx][0]), \
+                                       np.multiply(im_iy[...], TRIGON_PAIRS[bin_idx][1]))
 
 def forward_interpolate_gradient(im_gradient, bin_idx):
     '''
@@ -71,21 +86,33 @@ def hog_histogram_parallel(im_rgb, param):
     width = im_rgb.shape[1]
     cell_size = param[0]
     stride = param[1]
+    ############################
     # start to compute element-wise gradient, magnitude, and max orientation
     # according to Ix * cos(theta) + Iy * sin(theta)
     # where theta = {0, 2*pi/max_bins, ..., 2*pi*(1-1/max_bins)}
-    im_ix = cv2.filter2D(im_rgb, -1, np.array([[-1, 0, 1]])).transpose(2, 0, 1)
-    im_iy = cv2.filter2D(im_rgb, -1, np.array([[-1], [0], [1]])).transpose(2, 0, 1)
-    im_candidate = np.zeros((MAX_BINS, im_rgb.shape[2], im_rgb.shape[0], im_rgb.shape[1]), \
-                            dtype='f')
-    with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_BINS) as executor:
-        futures = [executor.submit(compute_candidate, im_candidate, im_ix, im_iy, i) \
-                    for i in range(MAX_BINS)]
-        concurrent.futures.wait(futures)
+    ############################
+    # im_ix = cv2.filter2D(im_rgb, -1, np.array([[-1, 0, 1]])).transpose(2, 0, 1)
+    # im_iy = cv2.filter2D(im_rgb, -1, np.array([[-1], [0], [1]])).transpose(2, 0, 1)
+    # im_candidate = np.zeros((MAX_BINS, im_rgb.shape[2], im_rgb.shape[0], im_rgb.shape[1]), \
+    #                         dtype='f')
+    # with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_BINS) as executor:
+    #     futures = [executor.submit(compute_candidate, im_candidate, im_ix, im_iy, i) \
+    #                 for i in range(MAX_BINS)]
+    #     concurrent.futures.wait(futures)
+    ############################
+    # compute Ix and serialize in the first row of im2col
+    im_ixy = cv2.filter2D(im_rgb, -1, np.array([[-1, 0, 1]])).transpose(2, 0, 1).reshape(1, -1)
+    # compute Iy and serialize in the second row of im2col
+    im_ixy = np.concatenate((im_ixy, \
+                        cv2.filter2D(im_rgb, -1, \
+                            np.array([[-1], [0], [1]])).transpose(2, 0, 1).reshape(1, -1)), \
+                        axis=0)
+    # matrix-matrix multiplication with respect to trigonometric pair
+    im_candidate = np.matmul(TRIGON_PAIRS, im_ixy).reshape(MAX_BINS, -1, height, width)
 
     im_candidate = im_candidate.astype(PRECISION)
     im_orientation = np.argmax(im_candidate, axis=0).astype('uint8')
-    # spread magnitude with respect to orientation theta
+    # spread magnitudes with respect to orientation theta
     # such that argmax Ix*cos+Iy*sin = Msin(theta-alpha) where theta = alpha
     im_gradient = np.zeros_like(im_candidate)
     idx = np.indices(im_orientation.shape)
@@ -108,6 +135,63 @@ def hog_histogram_parallel(im_rgb, param):
     # record histogram of oriented gradients (magnitude)
     im_histogram = np.zeros((NUM_BINS, im_rgb.shape[2], \
                                 (im_rgb.shape[0]-cell_size)//stride+1, \
+                                (im_rgb.shape[1]-cell_size)//stride+1))
+
+    for row in range(0, height-cell_size+1, stride):
+        for col in range(0, width-cell_size+1, stride):
+            im_histogram[..., row//stride, col//stride] = \
+                        np.sum(im_gradient[..., row:row+cell_size, col:col+cell_size], axis=(2, 3))
+
+    # since the order of dimensions in previous implementation: (HEIGHT, WIDTH, CHANNEL, BINS),
+    # optimized algorithm should also follow the order of dimensions: (CHANNEL, BINS, HEIGHT, WIDTH)
+    return im_histogram.transpose(1, 0, 2, 3)
+
+def hog_histogram_matmul(im_rgb, param):
+    '''
+    Make cell-wise histogram of oriented gradients
+    '''
+    height = im_rgb.shape[0]
+    width = im_rgb.shape[1]
+    cell_size = param[0]
+    stride = param[1]
+    ############################
+    # start to compute element-wise gradient, magnitude, and max orientation
+    # according to Ix * cos(theta) + Iy * sin(theta)
+    # where theta = {0, 2*pi/max_bins, ..., 2*pi*(1-1/max_bins)}
+    ############################
+    # compute Ix and serialize in the first row of im2col
+    im_ixy = cv2.filter2D(im_rgb, -1, np.array([[-1, 0, 1]])).transpose(2, 0, 1).reshape(1, -1)
+    # compute Iy and serialize in the second row of im2col
+    im_ixy = np.concatenate((im_ixy, \
+                        cv2.filter2D(im_rgb, -1, \
+                            np.array([[-1], [0], [1]])).transpose(2, 0, 1).reshape(1, -1)), \
+                        axis=0)
+    # matrix-matrix multiplication with respect to trigonometric pair
+    im_candidate = np.matmul(TRIGON_PAIRS, im_ixy).reshape(MAX_BINS, -1, height, width)
+
+    im_candidate = im_candidate.astype(PRECISION)
+    im_orientation = np.argmax(im_candidate, axis=0).astype('uint8')
+
+    # spread magnitudes with respect to orientation theta
+    # such that argmax Ix*cos+Iy*sin = Msin(theta-alpha) where theta = alpha
+    im_gradient = np.zeros_like(im_candidate)
+    idx = np.indices(im_orientation.shape)
+    im_gradient[im_orientation, idx[0], idx[1], idx[2]] = \
+                im_candidate[im_orientation, idx[0], idx[1], idx[2]]
+
+    if ALIASING_FACTOR > 1:
+        # bilinear interploation of magnitude to mitigate aliasing
+        im_gradient = np.matmul(FORWARD_INTERPOLATE,\
+                                im_gradient.reshape(MAX_BINS, -1))
+        im_gradient = np.matmul(BACKWARD_INTERPOLATE,\
+                                im_gradient).reshape(MAX_BINS, -1, height, width)
+
+        # downsample MAX_BINS to NUM_BINS
+        im_gradient = im_gradient[::ALIASING_FACTOR, ...]
+
+    # record histogram of oriented gradients (magnitude)
+    im_histogram = np.zeros((NUM_BINS, im_rgb.shape[2], \
+                            (im_rgb.shape[0]-cell_size)//stride+1, \
                                 (im_rgb.shape[1]-cell_size)//stride+1))
 
     for row in range(0, height-cell_size+1, stride):
