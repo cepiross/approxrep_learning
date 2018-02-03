@@ -218,8 +218,8 @@ def hog_histogram(im_rgb, param):
 
     im_candidate = np.zeros((im_rgb.shape[0], im_rgb.shape[1], im_rgb.shape[2], MAX_BINS))
     for i in range(MAX_BINS):
-        im_candidate[:, :, :, i] = np.add(np.multiply(im_ix[:, :, :], TRIGON_PAIRS[0][i]), \
-                                         np.multiply(im_iy[:, :, :], TRIGON_PAIRS[1][i]))
+        im_candidate[:, :, :, i] = np.add(np.multiply(im_ix[:, :, :], TRIGON_PAIRS[i][0]), \
+                                         np.multiply(im_iy[:, :, :], TRIGON_PAIRS[i][1]))
     im_orientation = np.argmax(im_candidate, axis=3)
     im_gradmax = np.max(im_candidate, axis=3)
 
