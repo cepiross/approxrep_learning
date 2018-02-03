@@ -23,14 +23,16 @@ sys.stdout = sys.stderr
 
 # I am going to try anti-aliasing according to factor x supersampling
 NUM_BINS = 6
-PRECISION = 'float32' # for 18 angular bins. 'int16' works for less than or equal to 6 angular bins.
+PRECISION = 'int16' # works for less than or equal to 18 angular bins.
 ALIASING_FACTOR = 3
+TRUNCATION_ORDER = 2
+TRUNCATION_DENOMINATOR = 2**TRUNCATION_ORDER
 MAX_BINS = NUM_BINS * ALIASING_FACTOR
 UNIT_DEGREE = 2 * math.pi / MAX_BINS
 TRIGON_PAIRS = np.zeros((MAX_BINS, 2), dtype='f')
 for tri_idx in range(MAX_BINS):
-    TRIGON_PAIRS[tri_idx][0] = math.cos(tri_idx * UNIT_DEGREE)
-    TRIGON_PAIRS[tri_idx][1] = math.sin(tri_idx * UNIT_DEGREE)
+    TRIGON_PAIRS[tri_idx][0] = math.cos(tri_idx * UNIT_DEGREE) * TRUNCATION_DENOMINATOR
+    TRIGON_PAIRS[tri_idx][1] = math.sin(tri_idx * UNIT_DEGREE) * TRUNCATION_DENOMINATOR
 
 FORWARD_INTERPOLATE = np.eye(MAX_BINS, dtype='f')
 for i in range(0, MAX_BINS, ALIASING_FACTOR):
@@ -63,8 +65,9 @@ def forward_interpolate_gradient(im_gradient, bin_idx):
         next_bin = (bin_idx + ALIASING_FACTOR) % MAX_BINS
         for offset in range(1, ALIASING_FACTOR):
             im_gradient[next_bin, ...] = np.add(im_gradient[next_bin, ...], \
-                                               np.multiply(im_gradient[bin_idx+offset, ...], \
-                                               float(offset) / ALIASING_FACTOR))
+                                            np.divide(offset * im_gradient[bin_idx+offset, ...], \
+                                                    ALIASING_FACTOR))
+
 
 def backward_interpolate_gradient(im_gradient, bin_idx):
     '''
@@ -75,8 +78,8 @@ def backward_interpolate_gradient(im_gradient, bin_idx):
         prev_bin = bin_idx - ALIASING_FACTOR
         for offset in range(1, ALIASING_FACTOR):
             im_gradient[prev_bin, ...] = np.add(im_gradient[prev_bin, ...], \
-                                               np.multiply(im_gradient[prev_bin+offset, ...], \
-                                               float(ALIASING_FACTOR - offset) / ALIASING_FACTOR))
+                                            np.divide((ALIASING_FACTOR - offset) * im_gradient[prev_bin+offset, ...], \
+                                                    ALIASING_FACTOR))
 
 def hog_histogram_parallel(im_rgb, param):
     '''
@@ -135,7 +138,7 @@ def hog_histogram_parallel(im_rgb, param):
     # record histogram of oriented gradients (magnitude)
     im_histogram = np.zeros((NUM_BINS, im_rgb.shape[2], \
                                 (im_rgb.shape[0]-cell_size)//stride+1, \
-                                (im_rgb.shape[1]-cell_size)//stride+1))
+                                (im_rgb.shape[1]-cell_size)//stride+1), dtype=PRECISION)
 
     for row in range(0, height-cell_size+1, stride):
         for col in range(0, width-cell_size+1, stride):
@@ -144,7 +147,7 @@ def hog_histogram_parallel(im_rgb, param):
 
     # since the order of dimensions in previous implementation: (HEIGHT, WIDTH, CHANNEL, BINS),
     # optimized algorithm should also follow the order of dimensions: (CHANNEL, BINS, HEIGHT, WIDTH)
-    return im_histogram.transpose(1, 0, 2, 3)
+    return np.right_shift(im_histogram, TRUNCATION_ORDER).transpose(1, 0, 2, 3)
 
 def hog_histogram_matmul(im_rgb, param):
     '''
@@ -192,7 +195,7 @@ def hog_histogram_matmul(im_rgb, param):
     # record histogram of oriented gradients (magnitude)
     im_histogram = np.zeros((NUM_BINS, im_rgb.shape[2], \
                             (im_rgb.shape[0]-cell_size)//stride+1, \
-                                (im_rgb.shape[1]-cell_size)//stride+1))
+                                (im_rgb.shape[1]-cell_size)//stride+1), dtype=PRECISION)
 
     for row in range(0, height-cell_size+1, stride):
         for col in range(0, width-cell_size+1, stride):
@@ -201,7 +204,7 @@ def hog_histogram_matmul(im_rgb, param):
 
     # since the order of dimensions in previous implementation: (HEIGHT, WIDTH, CHANNEL, BINS),
     # optimized algorithm should also follow the order of dimensions: (CHANNEL, BINS, HEIGHT, WIDTH)
-    return im_histogram.transpose(1, 0, 2, 3)
+    return np.right_shift(im_histogram.transpose(1, 0, 2, 3), TRUNCATION_ORDER)
 
 def hog_histogram(im_rgb, param):
     '''Make cell-wise histogram of oriented gradients'''
@@ -255,7 +258,8 @@ def hog_histogram(im_rgb, param):
         for col in range(0, width-cell_size+1, stride):
             im_histogram[row//stride, col//stride, :, :] = \
                         np.sum(im_gradient[row:row+cell_size, col:col+cell_size, :, :], axis=(0, 1))
-    return im_histogram
+
+    return np.divide(im_histogram, TRUNCATION_DENOMINATOR)
 
 def prepare_args():
     '''
