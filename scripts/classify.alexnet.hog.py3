@@ -34,20 +34,19 @@ for tri_idx in range(MAX_BINS):
     TRIGON_PAIRS[tri_idx][0] = math.cos(tri_idx * UNIT_DEGREE) * TRUNCATION_DENOMINATOR
     TRIGON_PAIRS[tri_idx][1] = math.sin(tri_idx * UNIT_DEGREE) * TRUNCATION_DENOMINATOR
 
-FORWARD_INTERPOLATE = np.eye(MAX_BINS, dtype='f')
+MATRIX_INTERPOLATION = np.eye(MAX_BINS, dtype='f')
+# forward interpolation
 for i in range(0, MAX_BINS, ALIASING_FACTOR):
     next_bin = (i + ALIASING_FACTOR) % MAX_BINS
     for offset in range(1, ALIASING_FACTOR):
-        FORWARD_INTERPOLATE[next_bin, i + offset] = \
+        MATRIX_INTERPOLATION[next_bin, i + offset] = \
                             float(offset) / ALIASING_FACTOR
-
-BACKWARD_INTERPOLATE = np.zeros((MAX_BINS, MAX_BINS), dtype='f')
+# backward interpolation
 for i in range(MAX_BINS, 0, -ALIASING_FACTOR):
     prev_bin = i - ALIASING_FACTOR
     for offset in range(1, ALIASING_FACTOR):
-        BACKWARD_INTERPOLATE[prev_bin, prev_bin + offset] = \
+        MATRIX_INTERPOLATION[prev_bin, prev_bin + offset] = \
                             float(ALIASING_FACTOR - offset) / ALIASING_FACTOR
-    BACKWARD_INTERPOLATE[prev_bin, prev_bin] = 1
 
 def compute_candidate(im_candidate, im_ix, im_iy, bin_idx):
     '''
@@ -56,30 +55,21 @@ def compute_candidate(im_candidate, im_ix, im_iy, bin_idx):
     im_candidate[bin_idx, ...] = np.add(np.multiply(im_ix[...], TRIGON_PAIRS[bin_idx][0]), \
                                        np.multiply(im_iy[...], TRIGON_PAIRS[bin_idx][1]))
 
-def forward_interpolate_gradient(im_gradient, bin_idx):
+def compute_interpolate_gradient(im_gradient, bin_idx):
     '''
-    Propagate gradients from intermediate angular bins to the next target angular bin.
-    prev_bin -- (intermediate: prev_bin+offset) -- next_bin
+    Propagate gradients from intermediate angular bins to the target angular bin.
+    prev_bin -- (intermediate: prev_bin+offset) -- target_bin
+    target_bin -- (intermediate: target_bin+offset) -- next_bin
     '''
     if bin_idx % ALIASING_FACTOR == 0 and bin_idx < MAX_BINS:
-        next_bin = (bin_idx + ALIASING_FACTOR) % MAX_BINS
+        prev_bin = (bin_idx - ALIASING_FACTOR) % MAX_BINS
+        tmp_gradient = im_gradient[bin_idx, ...]
         for offset in range(1, ALIASING_FACTOR):
-            im_gradient[next_bin, ...] = np.add(im_gradient[next_bin, ...], \
-                                            np.divide(offset * im_gradient[bin_idx+offset, ...], \
-                                                    ALIASING_FACTOR))
-
-
-def backward_interpolate_gradient(im_gradient, bin_idx):
-    '''
-    Propagate gradients from intermediate angular bins to the previous target angular bin.
-    prev_bin -- (intermediate: prev_bin+offset) -- next_bin
-    '''
-    if bin_idx % ALIASING_FACTOR == 0 and bin_idx > 0:
-        prev_bin = bin_idx - ALIASING_FACTOR
-        for offset in range(1, ALIASING_FACTOR):
-            im_gradient[prev_bin, ...] = np.add(im_gradient[prev_bin, ...], \
-                                            np.divide((ALIASING_FACTOR - offset) * im_gradient[prev_bin+offset, ...], \
-                                                    ALIASING_FACTOR))
+            # forward interpolation
+            tmp_gradient = np.add(tmp_gradient, offset * im_gradient[prev_bin+offset, ...])
+            # backward interpolation
+            tmp_gradient = np.add(tmp_gradient, (ALIASING_FACTOR - offset) * im_gradient[bin_idx+offset, ...])
+        im_gradient[bin_idx, ...] = np.divide(tmp_gradient, ALIASING_FACTOR)
 
 def hog_histogram_parallel(im_rgb, param):
     '''
@@ -125,11 +115,8 @@ def hog_histogram_parallel(im_rgb, param):
     if ALIASING_FACTOR > 1:
         # bilinear interploation of magnitude to mitigate aliasing
         with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_BINS) as executor:
-            futures = [executor.submit(forward_interpolate_gradient, im_gradient, i) \
+            futures = [executor.submit(compute_interpolate_gradient, im_gradient, i) \
                             for i in range(0, MAX_BINS, ALIASING_FACTOR)]
-            concurrent.futures.wait(futures)
-            futures = [executor.submit(backward_interpolate_gradient, im_gradient, i) \
-                            for i in range(MAX_BINS, 0, -ALIASING_FACTOR)]
             concurrent.futures.wait(futures)
 
         # downsample MAX_BINS to NUM_BINS
@@ -184,11 +171,8 @@ def hog_histogram_matmul(im_rgb, param):
 
     if ALIASING_FACTOR > 1:
         # bilinear interploation of magnitude to mitigate aliasing
-        im_gradient = np.matmul(FORWARD_INTERPOLATE,\
-                                im_gradient.reshape(MAX_BINS, -1))
-        im_gradient = np.matmul(BACKWARD_INTERPOLATE,\
-                                im_gradient).reshape(MAX_BINS, -1, height, width)
-
+        im_gradient = np.matmul(MATRIX_INTERPOLATION, \
+                                im_gradient.reshape(MAX_BINS, -1)).reshape(MAX_BINS, -1, height, width).astype(PRECISION)
         # downsample MAX_BINS to NUM_BINS
         im_gradient = im_gradient[::ALIASING_FACTOR, ...]
 
