@@ -132,9 +132,13 @@ def hog_histogram_parallel(im_rgb, param):
             im_histogram[..., row//stride, col//stride] = \
                         np.sum(im_gradient[..., row:row+cell_size, col:col+cell_size], axis=(2, 3))
 
+    if PRECISION == 'int16':
+        im_histogram = np.right_shift(im_histogram, TRUNCATION_ORDER)
+    else:
+        im_histogram = np.divide(im_histogram, TRUNCATION_DENOMINATOR)
     # since the order of dimensions in previous implementation: (HEIGHT, WIDTH, CHANNEL, BINS),
     # optimized algorithm should also follow the order of dimensions: (CHANNEL, BINS, HEIGHT, WIDTH)
-    return np.right_shift(im_histogram, TRUNCATION_ORDER).transpose(1, 0, 2, 3)
+    return im_histogram.transpose(1, 0, 2, 3)
 
 def hog_histogram_matmul(im_rgb, param):
     '''
@@ -186,9 +190,13 @@ def hog_histogram_matmul(im_rgb, param):
             im_histogram[..., row//stride, col//stride] = \
                         np.sum(im_gradient[..., row:row+cell_size, col:col+cell_size], axis=(2, 3))
 
+    if PRECISION == 'int16':
+        im_histogram = np.right_shift(im_histogram, TRUNCATION_ORDER)
+    else:
+        im_histogram = np.divide(im_histogram, TRUNCATION_DENOMINATOR)
     # since the order of dimensions in previous implementation: (HEIGHT, WIDTH, CHANNEL, BINS),
     # optimized algorithm should also follow the order of dimensions: (CHANNEL, BINS, HEIGHT, WIDTH)
-    return np.right_shift(im_histogram.transpose(1, 0, 2, 3), TRUNCATION_ORDER)
+    return im_histogram.transpose(1, 0, 2, 3)
 
 def hog_histogram(im_rgb, param):
     '''Make cell-wise histogram of oriented gradients'''
