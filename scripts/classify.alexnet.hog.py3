@@ -63,13 +63,13 @@ def compute_interpolate_gradient(im_gradient, bin_idx):
     '''
     if bin_idx % ALIASING_FACTOR == 0 and bin_idx < MAX_BINS:
         prev_bin = (bin_idx - ALIASING_FACTOR) % MAX_BINS
-        tmp_gradient = im_gradient[bin_idx, ...]
+        tmp_gradient = np.zeros_like(im_gradient[bin_idx, ...])
         for offset in range(1, ALIASING_FACTOR):
             # forward interpolation
             tmp_gradient = np.add(tmp_gradient, offset * im_gradient[prev_bin+offset, ...])
             # backward interpolation
             tmp_gradient = np.add(tmp_gradient, (ALIASING_FACTOR - offset) * im_gradient[bin_idx+offset, ...])
-        im_gradient[bin_idx, ...] = np.divide(tmp_gradient, ALIASING_FACTOR)
+        im_gradient[bin_idx, ...] = np.add(im_gradient[bin_idx, ...], np.divide(tmp_gradient, ALIASING_FACTOR))
 
 def hog_histogram_parallel(im_rgb, param):
     '''
