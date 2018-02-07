@@ -134,7 +134,7 @@ def hog_histogram_parallel(im_rgb, param):
 
     if PRECISION == 'int16':
         im_histogram = np.right_shift(im_histogram, TRUNCATION_ORDER)
-    else:
+    elif TRUNCATION_DENOMINATOR != 1:
         im_histogram = np.divide(im_histogram, TRUNCATION_DENOMINATOR)
     # since the order of dimensions in previous implementation: (HEIGHT, WIDTH, CHANNEL, BINS),
     # optimized algorithm should also follow the order of dimensions: (CHANNEL, BINS, HEIGHT, WIDTH)
@@ -192,7 +192,7 @@ def hog_histogram_matmul(im_rgb, param):
 
     if PRECISION == 'int16':
         im_histogram = np.right_shift(im_histogram, TRUNCATION_ORDER)
-    else:
+    elif TRUNCATION_DENOMINATOR != 1:
         im_histogram = np.divide(im_histogram, TRUNCATION_DENOMINATOR)
     # since the order of dimensions in previous implementation: (HEIGHT, WIDTH, CHANNEL, BINS),
     # optimized algorithm should also follow the order of dimensions: (CHANNEL, BINS, HEIGHT, WIDTH)
