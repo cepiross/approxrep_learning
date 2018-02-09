@@ -24,6 +24,7 @@ sys.stdout = sys.stderr
 # I am going to try anti-aliasing according to factor x supersampling
 NUM_BINS = 6
 PRECISION = 'int16' # works for less than or equal to 18 angular bins.
+OUT_PRECISION = 'float32'
 ALIASING_FACTOR = 3
 TRUNCATION_ORDER = 2
 TRUNCATION_DENOMINATOR = 2**TRUNCATION_ORDER
@@ -125,14 +126,14 @@ def hog_histogram_parallel(im_rgb, param):
     # record histogram of oriented gradients (magnitude)
     im_histogram = np.zeros((NUM_BINS, im_rgb.shape[2], \
                                 (im_rgb.shape[0]-cell_size)//stride+1, \
-                                (im_rgb.shape[1]-cell_size)//stride+1), dtype=PRECISION)
+                                (im_rgb.shape[1]-cell_size)//stride+1), dtype=OUT_PRECISION)
 
     for row in range(0, height-cell_size+1, stride):
         for col in range(0, width-cell_size+1, stride):
             im_histogram[..., row//stride, col//stride] = \
                         np.sum(im_gradient[..., row:row+cell_size, col:col+cell_size], axis=(2, 3))
 
-    if PRECISION == 'int16':
+    if OUT_PRECISION == 'int16':
         im_histogram = np.right_shift(im_histogram, TRUNCATION_ORDER)
     elif TRUNCATION_DENOMINATOR != 1:
         im_histogram = np.divide(im_histogram, TRUNCATION_DENOMINATOR)
