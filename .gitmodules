@@ -1,0 +1,9 @@
+[submodule "caffe-android-demo"]
+	path = caffe-android-demo
+	url = https://cepiross@github.com/cepiross/caffe-android-demo.git
+[submodule "caffe-android-lib"]
+	path = caffe-android-lib
+	url = https://cepiross@github.com/cepiross/caffe-android-lib.git
+[submodule "android-cmake"]
+	path = android-cmake
+	url = https://cepiross@github.com/cepiross/android-cmake.git
