@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Author: jpc5731@cse.psu.edu (Jinhang Choi), 1/27/2018
+Author: jpc5731@cse.psu.edu (Jinhang Choi), 01/27/2018
 
 Original version is Berkeley Vision LC, $CAFFE/python/classify.py
 classify.py is an out-of-the-box image classifer callable from the command line.
