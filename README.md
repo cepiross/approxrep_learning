@@ -11,6 +11,8 @@ This repository presents source code necessary to reproduce training/inference a
 ```
 
 This repository is composed of the following items:
+  - notebook/
+    * Experimental reports
   - android-cmake/
     * Android NDK compile setup
   - caffe-android-demo/
