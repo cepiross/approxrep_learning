@@ -2,11 +2,15 @@
 
 This repository presents source code necessary to reproduce training/inference addressed in the following paper:
 ```
-@unpublished{Choi2018ICCD_ApproxRepLearning,
+@INPROCEEDINGS{Choi2018ICCD_ApproxRepLearning,
   title={{Heuristic Approximation of Early-Stage CNN Data Representation for Vision Intelligence Systems}},
   author={Jinhang Choi and Jack Sampson and Vijaykrishnan Narayanan},
-  note={IEEE International Conference on Computer Design (ICCD)},
-  year={2018}
+  booktitle={IEEE 36th International Conference on Computer Design (ICCD)},
+  year={2018},
+  pages={218-225},
+  doi={10.1109/ICCD.2018.00041},
+  ISSN={2576-6996},
+  month=Oct
 }
 ```
 
